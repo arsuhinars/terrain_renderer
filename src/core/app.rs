@@ -1,4 +1,8 @@
-use std::{sync::Arc, thread, time::Duration};
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use winit::{
     dpi::{PhysicalSize, Size},
@@ -7,10 +11,13 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::render::{
-    render_manager::{RenderManager, RenderSettings},
-    renderer::Renderer,
-    skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
+use crate::{
+    controllers::camera_controller::{CameraController, CameraSettings},
+    render::{
+        render_manager::{RenderManager, RenderSettings},
+        renderer::Renderer,
+        skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
+    },
 };
 
 use super::{
@@ -26,6 +33,7 @@ pub struct AppSettings<'a> {
     target_frame_rate: u32,
     input_settings: InputSettings<'a>,
     render_settings: RenderSettings,
+    camera_settings: CameraSettings,
     skybox_renderer_settings: SkyboxRendererSettings,
 }
 
@@ -35,21 +43,25 @@ impl<'a> Default for AppSettings<'a> {
             initial_size: Size::Physical(PhysicalSize::new(800, 600)),
             title: "App".into(),
             resizable: true,
-            target_frame_rate: 60,
+            target_frame_rate: 30,
             input_settings: Default::default(),
             render_settings: Default::default(),
+            camera_settings: Default::default(),
             skybox_renderer_settings: Default::default(),
         }
     }
 }
 
 pub struct App<'a> {
-    settings: AppSettings<'a>,
+    settings: Box<AppSettings<'a>>,
     event_loop: Option<EventLoop<()>>,
     _window: Arc<Window>,
+    min_render_time: f32,
+    render_timer: f32,
     time_manager: TimeManager,
     input_manager: InputManager<'a>,
     render_manager: RenderManager<'a>,
+    camera_controller: CameraController,
 }
 
 impl<'a> App<'a> {
@@ -77,12 +89,15 @@ impl<'a> App<'a> {
         render_manager.set_renderers(renderers);
 
         Ok(App {
-            settings: settings.clone(),
+            settings: Box::new(settings.clone()),
             event_loop: Some(event_loop),
             _window: window,
+            min_render_time: (1.0 / (settings.target_frame_rate as f32)),
+            render_timer: 0.0,
             time_manager: TimeManager::new(),
             input_manager: InputManager::new(&settings.input_settings),
             render_manager,
+            camera_controller: CameraController::new(&settings.camera_settings),
         })
     }
 
@@ -122,15 +137,22 @@ impl<'a> App<'a> {
     }
 
     fn update(&mut self) {
+        self.render_timer += self.time_manager.delta();
+
         self.time_manager.update();
-        self.render_manager
-            .render()
-            .expect("Error occured while rendering");
+        self.camera_controller.update(
+            &self.time_manager,
+            &self.input_manager,
+            &mut self.render_manager,
+        );
+
+        if self.render_timer > self.min_render_time {
+            self.render_timer = 0.0;
+            self.render_manager
+                .render()
+                .expect("Error occured while rendering");
+        }
+
         self.input_manager.late_update();
-
-        let delay =
-            (1.0 / (self.settings.target_frame_rate as f32) - self.time_manager.delta()).max(0.0);
-
-        thread::sleep(Duration::from_secs_f32(delay));
     }
 }

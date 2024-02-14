@@ -1,3 +1,4 @@
+pub mod mesh_renderer;
 pub mod render_manager;
 pub mod renderer;
 pub mod scene;

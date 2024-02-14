@@ -1,19 +1,21 @@
-use bytemuck::{bytes_of, cast_slice, Pod, Zeroable};
+use bytemuck::{bytes_of, Pod, Zeroable};
 use glam::{Mat3, Mat4, Vec3};
 use once_cell::sync::Lazy;
 use wgpu::{
-    include_wgsl,
-    util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device, Face,
-    FragmentState, FrontFace, IndexFormat, LoadOp, MultisampleState, Operations, PipelineLayout,
-    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
+    include_wgsl, BindGroup, BindGroupLayout, BlendState, Buffer, ColorTargetState, ColorWrites,
+    Face, FragmentState, FrontFace, IndexFormat, LoadOp, MultisampleState, Operations,
+    PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    ShaderModule, ShaderStages, StoreOp, TextureView, VertexState,
+    ShaderModule, StoreOp, VertexState,
 };
 
-use super::{render_manager::RenderManager, renderer::Renderer, scene::Camera, vertex::Vertex};
+use crate::utils::{create_uniform_init, index_slice_to_buffer, vertex_slice_to_buffer};
+
+use super::{
+    render_manager::RenderManager,
+    renderer::{Renderer, RenderingContext},
+    vertex::Vertex,
+};
 
 #[derive(Clone, Copy)]
 pub struct SkyboxRendererSettings {
@@ -136,7 +138,7 @@ impl SkyboxRenderer {
         );
 
         let (uniform_buffer, uniform_bind_group_layout, uniform_bind_group) =
-            Self::create_uniform(&uniform, device);
+            create_uniform_init(&uniform, device);
 
         let shader = device.create_shader_module(include_wgsl!("../shaders/skybox.wgsl"));
 
@@ -189,8 +191,8 @@ impl SkyboxRenderer {
             pipeline_layout,
             pipeline,
 
-            vertex_buffer: Self::create_vertex_buffer(device),
-            index_buffer: Self::create_index_buffer(device),
+            vertex_buffer: vertex_slice_to_buffer(SKYBOX_VERTICES.as_ref(), device),
+            index_buffer: index_slice_to_buffer(&SKYBOX_INDICES, device),
 
             uniform,
             uniform_buffer,
@@ -198,83 +200,26 @@ impl SkyboxRenderer {
             uniform_bind_group,
         }
     }
-
-    fn create_uniform(
-        uniform: &SkyboxUniform,
-        device: &Device,
-    ) -> (Buffer, BindGroupLayout, BindGroup) {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytes_of(uniform),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::all(),
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        (buffer, bind_group_layout, bind_group)
-    }
-
-    fn create_vertex_buffer(device: &Device) -> Buffer {
-        device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: cast_slice(SKYBOX_VERTICES.as_ref()),
-            usage: BufferUsages::VERTEX,
-        })
-    }
-
-    fn create_index_buffer(device: &Device) -> Buffer {
-        device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: cast_slice(&SKYBOX_INDICES),
-            usage: BufferUsages::INDEX,
-        })
-    }
 }
 
 impl Renderer for SkyboxRenderer {
-    fn render(
-        &mut self,
-        camera: &mut Camera,
-        surface_view: &TextureView,
-        depth_view: &TextureView,
-        scene_bind_group: &BindGroup,
-        queue: &mut Queue,
-        encoder: &mut CommandEncoder,
-    ) {
+    fn render(&mut self, context: &RenderingContext) {
+        let mut camera = context.camera().borrow_mut();
         self.uniform.transform_matrix =
             camera.proj_matrix() * Mat4::from_mat3(Mat3::from_mat4(camera.view_matrix()));
 
-        queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
+        context
+            .queue()
+            .borrow_mut()
+            .write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
+
+        let mut encoder_ref = context.encoder().borrow_mut();
+        let encoder = encoder_ref.as_mut().unwrap();
 
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(RenderPassColorAttachment {
-                view: surface_view,
+                view: context.surface_view(),
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load,
@@ -289,7 +234,7 @@ impl Renderer for SkyboxRenderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
-        pass.set_bind_group(0, scene_bind_group, &[]);
+        pass.set_bind_group(0, context.scene_bind_group(), &[]);
         pass.set_bind_group(1, &self.uniform_bind_group, &[]);
 
         pass.draw_indexed(0..(SKYBOX_INDICES.len() as u32), 0, 0..1);

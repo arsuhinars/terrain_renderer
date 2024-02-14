@@ -1,21 +1,20 @@
-use std::{iter, sync::Arc};
+use std::{cell::RefCell, iter, sync::Arc};
 
 use bytemuck::bytes_of;
 use glam::{Quat, Vec3};
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-    Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
-    BufferBinding, BufferBindingType, BufferUsages, Color, Device, DeviceDescriptor, Extent3d,
+    Adapter, BindGroup, BindGroupLayout, Buffer, Color, Device, DeviceDescriptor, Extent3d,
     Instance, Operations, PresentMode, Queue, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RequestAdapterOptions, ShaderStages,
-    Surface, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RequestAdapterOptions, Surface,
+    SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat,
     TextureUsages, TextureView,
 };
 use winit::{dpi::PhysicalSize, window::Window};
 
+use crate::utils::create_uniform_init;
+
 use super::{
-    renderer::Renderer,
+    renderer::{Renderer, RenderingContext},
     scene::{Camera, GlobalLight, SceneUniform},
 };
 
@@ -45,15 +44,15 @@ impl Default for RenderSettings {
 }
 
 pub struct RenderManager<'a> {
-    settings: RenderSettings,
+    settings: Box<RenderSettings>,
     surface_config: wgpu::SurfaceConfiguration,
     surface: Surface<'a>,
     device: Device,
-    queue: Queue,
+    queue: RefCell<Queue>,
     depth_texture: Texture,
     depth_view: TextureView,
 
-    camera: Camera,
+    camera: RefCell<Camera>,
 
     scene_uniform: SceneUniform,
     scene_buffer: Buffer,
@@ -94,19 +93,20 @@ impl<'a> RenderManager<'a> {
             settings.camera_far_plane,
         );
 
-        let (scene_uniform, scene_buffer, scene_bind_group_layout, scene_bind_group) =
-            Self::create_scene_uniform(&device);
+        let scene_uniform = SceneUniform::default();
+        let (scene_buffer, scene_bind_group_layout, scene_bind_group) =
+            create_uniform_init(&scene_uniform, &device);
 
         Ok(RenderManager {
-            settings: *settings,
+            settings: Box::new(*settings),
             surface_config,
             surface,
             device,
-            queue,
+            queue: RefCell::new(queue),
             depth_texture,
             depth_view,
 
-            camera,
+            camera: RefCell::new(camera),
 
             scene_uniform,
             scene_buffer,
@@ -125,7 +125,7 @@ impl<'a> RenderManager<'a> {
         &self.device
     }
 
-    pub fn queue(&self) -> &Queue {
+    pub fn queue(&self) -> &RefCell<Queue> {
         &self.queue
     }
 
@@ -137,12 +137,8 @@ impl<'a> RenderManager<'a> {
         &self.depth_texture
     }
 
-    pub fn camera(&self) -> &Camera {
+    pub fn camera(&self) -> &RefCell<Camera> {
         &self.camera
-    }
-
-    pub fn mut_camera(&mut self) -> &mut Camera {
-        &mut self.camera
     }
 
     pub fn global_light(&self) -> &GlobalLight {
@@ -174,6 +170,7 @@ impl<'a> RenderManager<'a> {
             Self::create_depth_texture(&self.device, size.width, size.height);
 
         self.camera
+            .borrow_mut()
             .set_aspect_ratio((size.width as f32) / (size.height as f32));
     }
 
@@ -184,46 +181,57 @@ impl<'a> RenderManager<'a> {
             .map_err(|err| err.to_string())?;
         let surface_view = surface_texture.texture.create_view(&Default::default());
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let encoder = RefCell::new(Some(
+            self.device.create_command_encoder(&Default::default()),
+        ));
 
-        self.scene_uniform.view_proj_matrix = self.camera.view_proj_matrix();
+        self.scene_uniform.view_proj_matrix = self.camera.borrow_mut().view_proj_matrix();
         self.queue
+            .borrow_mut()
             .write_buffer(&self.scene_buffer, 0, bytes_of(&self.scene_uniform));
 
         {
-            encoder.begin_render_pass(&RenderPassDescriptor {
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &surface_view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: wgpu::LoadOp::Clear(self.settings.clear_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Store,
+            encoder
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .begin_render_pass(&RenderPassDescriptor {
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &surface_view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: wgpu::LoadOp::Clear(self.settings.clear_color),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
+                    ..Default::default()
+                });
         }
+
+        let mut context = RenderingContext::new(
+            &mut self.camera,
+            &surface_view,
+            &self.depth_view,
+            &self.scene_bind_group,
+            &self.queue,
+            &encoder,
+        );
 
         for renderer in self.renderers.as_mut_slice() {
-            renderer.render(
-                &mut self.camera,
-                &surface_view,
-                &self.depth_view,
-                &self.scene_bind_group,
-                &mut self.queue,
-                &mut encoder,
-            );
+            renderer.render(&mut context);
         }
 
-        self.queue.submit(iter::once(encoder.finish()));
+        self.queue
+            .borrow()
+            .submit(iter::once(encoder.replace(None).unwrap().finish()));
 
         surface_texture.present();
 
@@ -307,44 +315,5 @@ impl<'a> RenderManager<'a> {
         let depth_view = depth_texture.create_view(&Default::default());
 
         (depth_texture, depth_view)
-    }
-
-    fn create_scene_uniform(device: &Device) -> (SceneUniform, Buffer, BindGroupLayout, BindGroup) {
-        let scene_uniform = SceneUniform::default();
-
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytes_of(&scene_uniform),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::all(),
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        (scene_uniform, buffer, bind_group_layout, bind_group)
     }
 }

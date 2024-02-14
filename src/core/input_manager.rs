@@ -19,7 +19,7 @@ pub struct InputSettings<'a> {
 impl<'a> Default for InputSettings<'a> {
     fn default() -> Self {
         Self {
-            look_sensitivity: 1.0,
+            look_sensitivity: 0.1,
             right_keys: &[
                 PhysicalKey::Code(KeyCode::KeyD),
                 PhysicalKey::Code(KeyCode::ArrowRight),
@@ -43,7 +43,7 @@ impl<'a> Default for InputSettings<'a> {
 }
 
 pub struct InputManager<'a> {
-    settings: InputSettings<'a>,
+    settings: Box<InputSettings<'a>>,
     last_cursor_pos: Vec2,
     move_vector: Vec3,
     look_delta: Vec2,
@@ -52,7 +52,7 @@ pub struct InputManager<'a> {
 impl<'a> InputManager<'a> {
     pub fn new(settings: &InputSettings<'a>) -> InputManager<'a> {
         InputManager {
-            settings: *settings,
+            settings: Box::new(*settings),
             last_cursor_pos: Default::default(),
             move_vector: Vec3::ZERO,
             look_delta: Vec2::ZERO,
