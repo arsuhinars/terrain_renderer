@@ -9,9 +9,10 @@ use wgpu::{
     ShaderModule, StoreOp, VertexState,
 };
 
-use crate::utils::{create_uniform_init, index_slice_to_buffer, vertex_slice_to_buffer};
+use crate::utils::create_uniform_init;
 
 use super::{
+    mesh::Mesh,
     render_manager::RenderManager,
     renderer::{Renderer, RenderingContext},
     vertex::Vertex,
@@ -114,8 +115,7 @@ pub struct SkyboxRenderer {
     pipeline_layout: PipelineLayout,
     pipeline: RenderPipeline,
 
-    vertex_buffer: Buffer,
-    index_buffer: Buffer,
+    skybox_mesh: Mesh,
 
     uniform: SkyboxUniform,
     uniform_buffer: Buffer,
@@ -191,8 +191,7 @@ impl SkyboxRenderer {
             pipeline_layout,
             pipeline,
 
-            vertex_buffer: vertex_slice_to_buffer(SKYBOX_VERTICES.as_ref(), device),
-            index_buffer: index_slice_to_buffer(&SKYBOX_INDICES, device),
+            skybox_mesh: Mesh::from_slices(device, SKYBOX_VERTICES.as_ref(), &SKYBOX_INDICES),
 
             uniform,
             uniform_buffer,
@@ -232,11 +231,14 @@ impl Renderer for SkyboxRenderer {
         });
 
         pass.set_pipeline(&self.pipeline);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+        pass.set_vertex_buffer(0, self.skybox_mesh.vertex_buffer().slice(..));
+        pass.set_index_buffer(
+            self.skybox_mesh.index_buffer().slice(..),
+            IndexFormat::Uint16,
+        );
         pass.set_bind_group(0, context.scene_bind_group(), &[]);
         pass.set_bind_group(1, &self.uniform_bind_group, &[]);
 
-        pass.draw_indexed(0..(SKYBOX_INDICES.len() as u32), 0, 0..1);
+        pass.draw_indexed(0..(self.skybox_mesh.indices().len() as u32), 0, 0..1);
     }
 }

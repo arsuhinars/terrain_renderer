@@ -1,4 +1,5 @@
-use bytemuck::{bytes_of, cast_slice, Pod};
+use bytemuck::{bytes_of, Pod};
+use glam::Vec3;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -8,23 +9,7 @@ use wgpu::{
 
 use crate::render::vertex::Vertex;
 
-pub mod mesh;
-
-pub fn vertex_slice_to_buffer(vertices: &[Vertex], device: &Device) -> Buffer {
-    device.create_buffer_init(&BufferInitDescriptor {
-        label: None,
-        contents: cast_slice(vertices),
-        usage: BufferUsages::VERTEX,
-    })
-}
-
-pub fn index_slice_to_buffer(indices: &[u16], device: &Device) -> Buffer {
-    device.create_buffer_init(&BufferInitDescriptor {
-        label: None,
-        contents: cast_slice(&indices),
-        usage: BufferUsages::INDEX,
-    })
-}
+pub mod mesh_generator;
 
 pub fn create_uniform_init(
     uniform: &impl Pod,
@@ -64,4 +49,16 @@ pub fn create_uniform_init(
     });
 
     (buffer, bind_group_layout, bind_group)
+}
+
+fn create_triangle_plane(points: [Vec3; 3], color: Vec3) -> [Vertex; 3] {
+    let a = points[1] - points[0];
+    let b = points[2] - points[0];
+    let n = a.cross(b);
+
+    [
+        Vertex::new(points[0], n, color),
+        Vertex::new(points[1], n, color),
+        Vertex::new(points[2], n, color),
+    ]
 }

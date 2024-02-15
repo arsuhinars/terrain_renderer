@@ -14,10 +14,12 @@ use winit::{
 use crate::{
     controllers::camera_controller::{CameraController, CameraSettings},
     render::{
+        mesh_renderer::MeshRenderer,
         render_manager::{RenderManager, RenderSettings},
         renderer::Renderer,
         skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
     },
+    utils::mesh_generator::{generate_terrain_mesh, TerrainSettings},
 };
 
 use super::{
@@ -26,18 +28,18 @@ use super::{
 };
 
 #[derive(Clone)]
-pub struct AppSettings<'a> {
+pub struct AppSettings {
     initial_size: Size,
     title: String,
     resizable: bool,
     target_frame_rate: u32,
-    input_settings: InputSettings<'a>,
+    input_settings: InputSettings,
     render_settings: RenderSettings,
     camera_settings: CameraSettings,
     skybox_renderer_settings: SkyboxRendererSettings,
 }
 
-impl<'a> Default for AppSettings<'a> {
+impl Default for AppSettings {
     fn default() -> Self {
         Self {
             initial_size: Size::Physical(PhysicalSize::new(800, 600)),
@@ -53,19 +55,18 @@ impl<'a> Default for AppSettings<'a> {
 }
 
 pub struct App<'a> {
-    settings: Box<AppSettings<'a>>,
     event_loop: Option<EventLoop<()>>,
     _window: Arc<Window>,
     min_render_time: f32,
     render_timer: f32,
     time_manager: TimeManager,
-    input_manager: InputManager<'a>,
+    input_manager: InputManager,
     render_manager: RenderManager<'a>,
     camera_controller: CameraController,
 }
 
 impl<'a> App<'a> {
-    pub async fn new(settings: &AppSettings<'a>) -> Result<App<'a>, String> {
+    pub async fn new(settings: &AppSettings) -> Result<App<'a>, String> {
         let event_loop = EventLoop::new().map_err(|err| err.to_string())?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
@@ -81,15 +82,20 @@ impl<'a> App<'a> {
         let mut render_manager =
             RenderManager::new(&settings.render_settings, window.clone()).await?;
 
-        let renderers: Vec<Box<dyn Renderer>> = vec![Box::new(SkyboxRenderer::new(
-            &settings.skybox_renderer_settings,
-            &render_manager,
-        ))];
+        let renderers: Vec<Box<dyn Renderer>> = vec![
+            Box::new(SkyboxRenderer::new(
+                &settings.skybox_renderer_settings,
+                &render_manager,
+            )),
+            Box::new(MeshRenderer::new(
+                generate_terrain_mesh(render_manager.device(), &Default::default()),
+                &render_manager,
+            )),
+        ];
 
         render_manager.set_renderers(renderers);
 
         Ok(App {
-            settings: Box::new(settings.clone()),
             event_loop: Some(event_loop),
             _window: window,
             min_render_time: (1.0 / (settings.target_frame_rate as f32)),
@@ -132,6 +138,10 @@ impl<'a> App<'a> {
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
             } => self.input_manager.handle_cursor_movement(position),
+            Event::WindowEvent {
+                event: WindowEvent::CursorEntered { .. },
+                ..
+            } => self.input_manager.handle_cursor_enter(),
             _ => (),
         }
     }

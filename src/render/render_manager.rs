@@ -207,7 +207,7 @@ impl<'a> RenderManager<'a> {
                     depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                         view: &self.depth_view,
                         depth_ops: Some(Operations {
-                            load: wgpu::LoadOp::Clear(0.0),
+                            load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
