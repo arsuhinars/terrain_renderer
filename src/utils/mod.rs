@@ -9,7 +9,7 @@ use wgpu::{
 
 use crate::render::vertex::Vertex;
 
-pub mod mesh_generator;
+pub mod terrain_generator;
 
 pub fn create_uniform_init(
     uniform: &impl Pod,

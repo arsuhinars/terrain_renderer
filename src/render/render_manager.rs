@@ -125,10 +125,6 @@ impl<'a> RenderManager<'a> {
         &self.device
     }
 
-    pub fn queue(&self) -> &RefCell<Queue> {
-        &self.queue
-    }
-
     pub fn surface_format(&self) -> TextureFormat {
         self.surface_config.format
     }
@@ -147,10 +143,6 @@ impl<'a> RenderManager<'a> {
 
     pub fn mut_global_light(&mut self) -> &mut GlobalLight {
         &mut self.scene_uniform.global_light
-    }
-
-    pub fn scene_bind_group(&self) -> &BindGroup {
-        &self.scene_bind_group
     }
 
     pub fn scene_bind_group_layout(&self) -> &BindGroupLayout {

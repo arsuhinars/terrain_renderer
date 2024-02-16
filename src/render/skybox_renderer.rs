@@ -111,15 +111,15 @@ static SKYBOX_INDICES: [u16; 36] = [
 ];
 
 pub struct SkyboxRenderer {
-    shader: ShaderModule,
-    pipeline_layout: PipelineLayout,
+    _shader: ShaderModule,
+    _pipeline_layout: PipelineLayout,
     pipeline: RenderPipeline,
 
     skybox_mesh: Mesh,
 
     uniform: SkyboxUniform,
     uniform_buffer: Buffer,
-    uniform_bind_group_layout: BindGroupLayout,
+    _uniform_bind_group_layout: BindGroupLayout,
     uniform_bind_group: BindGroup,
 }
 
@@ -187,15 +187,15 @@ impl SkyboxRenderer {
         });
 
         SkyboxRenderer {
-            shader,
-            pipeline_layout,
+            _shader: shader,
+            _pipeline_layout: pipeline_layout,
             pipeline,
 
             skybox_mesh: Mesh::from_slices(device, SKYBOX_VERTICES.as_ref(), &SKYBOX_INDICES),
 
             uniform,
             uniform_buffer,
-            uniform_bind_group_layout,
+            _uniform_bind_group_layout: uniform_bind_group_layout,
             uniform_bind_group,
         }
     }

@@ -1,8 +1,8 @@
 use wgpu::{
-    include_wgsl, BlendState, Buffer, ColorTargetState, ColorWrites, CompareFunction,
-    DepthBiasState, DepthStencilState, Face, FragmentState, FrontFace, IndexFormat, LoadOp,
-    MultisampleState, Operations, PipelineLayout, PipelineLayoutDescriptor, PolygonMode,
-    PrimitiveState, PrimitiveTopology, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    include_wgsl, BlendState, ColorTargetState, ColorWrites, CompareFunction, DepthBiasState,
+    DepthStencilState, Face, FragmentState, FrontFace, IndexFormat, LoadOp, MultisampleState,
+    Operations, PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState,
+    PrimitiveTopology, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
     RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModule, StencilFaceState,
     StencilState, StoreOp, VertexState,
 };
@@ -15,8 +15,8 @@ use super::{
 };
 
 pub struct MeshRenderer {
-    shader: ShaderModule,
-    pipeline_layout: PipelineLayout,
+    _shader: ShaderModule,
+    _pipeline_layout: PipelineLayout,
     pipeline: RenderPipeline,
     mesh: Mesh,
 }
@@ -80,8 +80,8 @@ impl MeshRenderer {
         });
 
         MeshRenderer {
-            shader,
-            pipeline_layout,
+            _shader: shader,
+            _pipeline_layout: pipeline_layout,
             pipeline,
             mesh,
         }

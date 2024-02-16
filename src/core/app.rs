@@ -1,8 +1,4 @@
-use std::{
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 use winit::{
     dpi::{PhysicalSize, Size},
@@ -19,7 +15,7 @@ use crate::{
         renderer::Renderer,
         skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
     },
-    utils::mesh_generator::{generate_terrain_mesh, TerrainSettings},
+    utils::terrain_generator::generate_terrain_mesh,
 };
 
 use super::{

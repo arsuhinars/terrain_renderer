@@ -27,10 +27,6 @@ impl Vertex {
         }
     }
 
-    pub fn attributes() -> &'static [VertexAttribute] {
-        &VERTEX_ATTRIBUTES
-    }
-
     pub fn buffer_layout() -> VertexBufferLayout<'static> {
         VertexBufferLayout {
             array_stride: size_of::<Vertex>() as u64,
