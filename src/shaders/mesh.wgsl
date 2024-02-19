@@ -1,11 +1,12 @@
 struct GlobalLight {
-    light_dir: vec3f,
-    light_color: vec3f
+    dir: vec3f,
+    color: vec3f
 }
 
 struct SceneUniform {
     view_proj_matrix: mat4x4f,
-    global_light: GlobalLight
+    global_light: GlobalLight,
+    ambient_light: vec3f
 }
 
 @group(0) @binding(0)
@@ -22,11 +23,16 @@ struct VertexOutput {
     @location(1) @interpolate(perspective) color: vec3f
 }
 
+fn calc_global_light(color: vec3f, n: vec3f) -> vec3f {
+    let k = scene.ambient_light + scene.global_light.color * max(dot(n, scene.global_light.dir), 0.0);
+    return color * k;
+}
+
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     let out = VertexOutput(
         scene.view_proj_matrix * vec4f(in.position, 1.0),
-        in.color
+        calc_global_light(in.color, in.normal)
     );
 
     return out;

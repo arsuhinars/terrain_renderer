@@ -2,24 +2,42 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 
 #[repr(C)]
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct SceneUniform {
     pub view_proj_matrix: Mat4,
     pub global_light: GlobalLight,
+    pub ambient_light: Vec3,
+    _padding1: f32,
 }
 
 impl SceneUniform {
-    pub fn new(view_proj_matrix: Mat4, global_light: GlobalLight) -> SceneUniform {
+    pub fn new(
+        view_proj_matrix: Mat4,
+        global_light: GlobalLight,
+        ambient_light: Vec3,
+    ) -> SceneUniform {
         SceneUniform {
             view_proj_matrix,
             global_light,
+            ambient_light,
             ..Default::default()
         }
     }
 }
 
+impl Default for SceneUniform {
+    fn default() -> Self {
+        Self {
+            view_proj_matrix: Default::default(),
+            global_light: Default::default(),
+            ambient_light: Vec3::new(0.085, 0.245, 0.494),
+            _padding1: Default::default(),
+        }
+    }
+}
+
 #[repr(C)]
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct GlobalLight {
     pub light_direction: Vec3,
     _padding1: f32,
@@ -33,6 +51,17 @@ impl GlobalLight {
             light_direction,
             light_color,
             ..Default::default()
+        }
+    }
+}
+
+impl Default for GlobalLight {
+    fn default() -> Self {
+        Self {
+            light_direction: Vec3::new(-1.0, -1.0, 1.0),
+            _padding1: Default::default(),
+            light_color: Vec3::new(0.8, 0.48, 0.74),
+            _padding2: Default::default(),
         }
     }
 }
