@@ -125,6 +125,10 @@ impl<'a> RenderManager<'a> {
         &self.device
     }
 
+    pub fn queue(&self) -> &RefCell<Queue> {
+        &self.queue
+    }
+
     pub fn surface_format(&self) -> TextureFormat {
         self.surface_config.format
     }

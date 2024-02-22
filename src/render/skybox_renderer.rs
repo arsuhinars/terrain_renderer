@@ -39,7 +39,7 @@ impl Default for SkyboxRendererSettings {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
-pub struct SkyboxUniform {
+struct SkyboxUniform {
     pub transform_matrix: Mat4,
     pub sky_color: Vec3,
     _padding1: f32,
@@ -47,23 +47,6 @@ pub struct SkyboxUniform {
     _padding2: f32,
     pub bottom_color: Vec3,
     pub scattering: f32,
-}
-
-impl SkyboxUniform {
-    pub fn new(
-        sky_color: Vec3,
-        horizon_color: Vec3,
-        bottom_color: Vec3,
-        scattering: f32,
-    ) -> SkyboxUniform {
-        SkyboxUniform {
-            sky_color,
-            horizon_color,
-            bottom_color,
-            scattering,
-            ..Default::default()
-        }
-    }
 }
 
 static SKYBOX_VERTICES: Lazy<[Vertex; 24]> = Lazy::new(|| {
@@ -130,12 +113,13 @@ impl SkyboxRenderer {
     ) -> SkyboxRenderer {
         let device = render_manager.device();
 
-        let uniform = SkyboxUniform::new(
-            settings.sky_color,
-            settings.horizon_color,
-            settings.bottom_color,
-            settings.scattering,
-        );
+        let uniform = SkyboxUniform {
+            sky_color: settings.sky_color,
+            horizon_color: settings.horizon_color,
+            bottom_color: settings.bottom_color,
+            scattering: settings.scattering,
+            ..Default::default()
+        };
 
         let (uniform_buffer, uniform_bind_group_layout, uniform_bind_group) =
             create_uniform_init(&uniform, device);
