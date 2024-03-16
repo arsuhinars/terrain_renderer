@@ -12,7 +12,6 @@ use crate::{
     render::{
         mesh_renderer::MeshRenderer,
         render_manager::{RenderManager, RenderSettings},
-        renderer::Renderer,
         skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
         water_renderer::{WaterRenderer, WaterRendererSettings},
     },
