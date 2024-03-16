@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use winit::{
     dpi::{PhysicalSize, Size},
@@ -14,6 +14,7 @@ use crate::{
         render_manager::{RenderManager, RenderSettings},
         renderer::Renderer,
         skybox_renderer::{SkyboxRenderer, SkyboxRendererSettings},
+        water_renderer::{WaterRenderer, WaterRendererSettings},
     },
     utils::terrain_generator::generate_terrain_mesh,
 };
@@ -33,6 +34,7 @@ pub struct AppSettings {
     render_settings: RenderSettings,
     camera_settings: CameraSettings,
     skybox_renderer_settings: SkyboxRendererSettings,
+    water_renderer_settings: WaterRendererSettings,
 }
 
 impl Default for AppSettings {
@@ -46,6 +48,7 @@ impl Default for AppSettings {
             render_settings: Default::default(),
             camera_settings: Default::default(),
             skybox_renderer_settings: Default::default(),
+            water_renderer_settings: Default::default(),
         }
     }
 }
@@ -54,7 +57,7 @@ pub struct App<'a> {
     event_loop: Option<EventLoop<()>>,
     _window: Arc<Window>,
     min_render_time: f32,
-    render_timer: f32,
+    last_render_time: Instant,
     time_manager: TimeManager,
     input_manager: InputManager,
     render_manager: RenderManager<'a>,
@@ -78,24 +81,24 @@ impl<'a> App<'a> {
         let mut render_manager =
             RenderManager::new(&settings.render_settings, window.clone()).await?;
 
-        let renderers: Vec<Box<dyn Renderer>> = vec![
-            Box::new(SkyboxRenderer::new(
-                &settings.skybox_renderer_settings,
-                &render_manager,
-            )),
-            Box::new(MeshRenderer::new(
-                generate_terrain_mesh(render_manager.device(), &Default::default()),
-                &render_manager,
-            )),
-        ];
-
-        render_manager.set_renderers(renderers);
+        render_manager.add_renderer(Box::new(SkyboxRenderer::new(
+            &settings.skybox_renderer_settings,
+            &render_manager,
+        )));
+        render_manager.add_renderer(Box::new(MeshRenderer::new(
+            generate_terrain_mesh(render_manager.device(), &Default::default()),
+            &render_manager,
+        )));
+        render_manager.add_renderer(Box::new(WaterRenderer::new(
+            &settings.water_renderer_settings,
+            &render_manager,
+        )));
 
         Ok(App {
             event_loop: Some(event_loop),
             _window: window,
             min_render_time: (1.0 / (settings.target_frame_rate as f32)),
-            render_timer: 0.0,
+            last_render_time: Instant::now(),
             time_manager: TimeManager::new(),
             input_manager: InputManager::new(&settings.input_settings),
             render_manager,
@@ -143,22 +146,22 @@ impl<'a> App<'a> {
     }
 
     fn update(&mut self) {
-        self.render_timer += self.time_manager.delta();
+        let instant = Instant::now();
+        let t = instant.duration_since(self.last_render_time).as_secs_f32();
 
-        self.time_manager.update();
-        self.camera_controller.update(
-            &self.time_manager,
-            &self.input_manager,
-            &mut self.render_manager,
-        );
-
-        if self.render_timer > self.min_render_time {
-            self.render_timer = 0.0;
+        if t > self.min_render_time {
+            self.last_render_time = instant;
+            self.time_manager.update();
+            self.camera_controller.update(
+                &self.time_manager,
+                &self.input_manager,
+                &mut self.render_manager,
+            );
             self.render_manager
-                .render()
+                .render(&self.time_manager)
                 .expect("Error occured while rendering");
-        }
 
-        self.input_manager.late_update();
+            self.input_manager.late_update();
+        }
     }
 }

@@ -4,6 +4,12 @@ use wgpu::{BindGroup, CommandEncoder, Queue, TextureView};
 
 use super::scene::Camera;
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RenderStage {
+    OPAQUE,
+    TRANSPARENT,
+}
+
 pub struct RenderingContext<'a> {
     camera: &'a RefCell<Camera>,
     surface_view: &'a TextureView,
@@ -59,4 +65,6 @@ impl<'a> RenderingContext<'a> {
 
 pub trait Renderer {
     fn render(&mut self, context: &RenderingContext);
+
+    fn stage(&self) -> RenderStage;
 }

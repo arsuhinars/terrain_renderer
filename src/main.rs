@@ -1,9 +1,9 @@
 use core::app::{App, AppSettings};
 
-pub mod controllers;
-pub mod core;
-pub mod render;
-pub mod utils;
+mod controllers;
+mod core;
+mod render;
+mod utils;
 
 fn main() -> Result<(), String> {
     let app_settings = Box::new(AppSettings::default());

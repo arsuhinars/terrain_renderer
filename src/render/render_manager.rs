@@ -1,21 +1,23 @@
-use std::{cell::RefCell, iter, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, iter, sync::Arc};
 
-use bytemuck::bytes_of;
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use wgpu::{
-    Adapter, BindGroup, BindGroupLayout, Buffer, Color, Device, DeviceDescriptor, Extent3d,
-    Instance, Operations, PresentMode, Queue, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RequestAdapterOptions, Surface,
-    SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureUsages, TextureView,
+    Adapter, Color, Device, DeviceDescriptor, Instance, Operations, PresentMode, Queue,
+    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RequestAdapterOptions, Surface, SurfaceConfiguration, Texture, TextureFormat, TextureUsages,
+    TextureView,
 };
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::utils::create_uniform_init;
+use crate::{
+    core::time_manager::TimeManager,
+    utils::{copy_textures_2d, create_texture_2d},
+};
 
 use super::{
-    renderer::{Renderer, RenderingContext},
-    scene::{Camera, GlobalLight, SceneUniform},
+    bind_group::BindGroupHelper,
+    renderer::{RenderStage, Renderer, RenderingContext},
+    scene::{Camera, SceneBindGroup},
 };
 
 #[derive(Clone, Copy)]
@@ -52,14 +54,11 @@ pub struct RenderManager<'a> {
     depth_texture: Texture,
     depth_view: TextureView,
 
-    camera: RefCell<Camera>,
+    camera: Box<RefCell<Camera>>,
 
-    scene_uniform: SceneUniform,
-    scene_buffer: Buffer,
-    scene_bind_group_layout: BindGroupLayout,
-    scene_bind_group: BindGroup,
+    scene_bind_group: Box<RefCell<SceneBindGroup>>,
 
-    renderers: Vec<Box<dyn Renderer>>,
+    renderers_by_stage: HashMap<RenderStage, Vec<Box<dyn Renderer>>>,
 }
 
 impl<'a> RenderManager<'a> {
@@ -81,8 +80,29 @@ impl<'a> RenderManager<'a> {
 
         surface.configure(&device, &surface_config);
 
-        let (depth_texture, depth_view) =
-            Self::create_depth_texture(&device, surface_width, surface_height);
+        let depth_texture = create_texture_2d(
+            &device,
+            TextureFormat::Depth32Float,
+            surface_width,
+            surface_height,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        );
+        let depth_view = depth_texture.create_view(&Default::default());
+
+        let opaque_texture = create_texture_2d(
+            &device,
+            surface_config.format,
+            surface_width,
+            surface_height,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        );
+        let opaque_depth_texture = create_texture_2d(
+            &device,
+            TextureFormat::Depth32Float,
+            surface_width,
+            surface_height,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        );
 
         let camera = Camera::new(
             Vec3::ZERO,
@@ -93,9 +113,7 @@ impl<'a> RenderManager<'a> {
             settings.camera_far_plane,
         );
 
-        let scene_uniform = SceneUniform::default();
-        let (scene_buffer, scene_bind_group_layout, scene_bind_group) =
-            create_uniform_init(&scene_uniform, &device);
+        let scene_bind_group = SceneBindGroup::new(&device, opaque_texture, opaque_depth_texture);
 
         Ok(RenderManager {
             settings: Box::new(*settings),
@@ -106,27 +124,31 @@ impl<'a> RenderManager<'a> {
             depth_texture,
             depth_view,
 
-            camera: RefCell::new(camera),
+            camera: Box::new(RefCell::new(camera)),
 
-            scene_uniform,
-            scene_buffer,
-            scene_bind_group_layout,
-            scene_bind_group,
+            scene_bind_group: Box::new(RefCell::new(scene_bind_group)),
 
-            renderers: Vec::new(),
+            renderers_by_stage: HashMap::from([
+                (RenderStage::OPAQUE, Vec::new()),
+                (RenderStage::TRANSPARENT, Vec::new()),
+            ]),
         })
     }
 
-    pub fn set_renderers(&mut self, renderers: Vec<Box<dyn Renderer>>) {
-        self.renderers = renderers;
+    pub fn add_renderer(&mut self, renderer: Box<dyn Renderer>) {
+        let v = self.renderers_by_stage.get(&renderer.stage());
+        if v.is_none() {
+            self.renderers_by_stage.insert(renderer.stage(), Vec::new());
+        }
+
+        self.renderers_by_stage
+            .get_mut(&renderer.stage())
+            .unwrap()
+            .push(renderer);
     }
 
     pub fn device(&self) -> &Device {
         &self.device
-    }
-
-    pub fn queue(&self) -> &RefCell<Queue> {
-        &self.queue
     }
 
     pub fn surface_format(&self) -> TextureFormat {
@@ -137,20 +159,12 @@ impl<'a> RenderManager<'a> {
         &self.depth_texture
     }
 
+    pub fn scene_bind_group(&self) -> &RefCell<SceneBindGroup> {
+        self.scene_bind_group.as_ref()
+    }
+
     pub fn camera(&self) -> &RefCell<Camera> {
         &self.camera
-    }
-
-    pub fn global_light(&self) -> &GlobalLight {
-        &self.scene_uniform.global_light
-    }
-
-    pub fn mut_global_light(&mut self) -> &mut GlobalLight {
-        &mut self.scene_uniform.global_light
-    }
-
-    pub fn scene_bind_group_layout(&self) -> &BindGroupLayout {
-        &self.scene_bind_group_layout
     }
 
     pub fn handle_resize(&mut self, size: PhysicalSize<u32>) {
@@ -162,66 +176,108 @@ impl<'a> RenderManager<'a> {
         self.surface_config.height = size.height;
         self.surface.configure(&self.device, &self.surface_config);
 
-        (self.depth_texture, self.depth_view) =
-            Self::create_depth_texture(&self.device, size.width, size.height);
+        let mut scene_bind_group = self.scene_bind_group.borrow_mut();
+
+        let mut uniform = *scene_bind_group.uniform();
+        uniform.surface_size = Vec2::new(size.width as f32, size.height as f32);
+        scene_bind_group.update_uniform(&self.queue.borrow(), &uniform);
+
+        self.depth_texture = create_texture_2d(
+            &self.device,
+            self.depth_texture.format(),
+            size.width,
+            size.height,
+            self.depth_texture.usage(),
+        );
+        self.depth_view = self.depth_texture.create_view(&Default::default());
+
+        let opaque_texture = create_texture_2d(
+            &self.device,
+            self.surface_format(),
+            size.width,
+            size.height,
+            scene_bind_group.opaque_texture().usage(),
+        );
+
+        let opaque_depth_texture = create_texture_2d(
+            &self.device,
+            self.depth_texture.format(),
+            size.width,
+            size.height,
+            scene_bind_group.opaque_depth_texture().usage(),
+        );
+
+        scene_bind_group.update_textures(opaque_texture, opaque_depth_texture);
 
         self.camera
             .borrow_mut()
             .set_aspect_ratio((size.width as f32) / (size.height as f32));
     }
 
-    pub fn render(&mut self) -> Result<(), String> {
-        let surface_texture = self
+    pub fn render(&mut self, time_manager: &TimeManager) -> Result<(), String> {
+        let surface = self
             .surface
             .get_current_texture()
             .map_err(|err| err.to_string())?;
-        let surface_view = surface_texture.texture.create_view(&Default::default());
+        let surface_view = surface.texture.create_view(&Default::default());
+
+        let mut scene_bind_group = self.scene_bind_group.borrow_mut();
 
         let encoder = RefCell::new(Some(
             self.device.create_command_encoder(&Default::default()),
         ));
 
-        self.scene_uniform.view_proj_matrix = self.camera.borrow_mut().view_proj_matrix();
-        self.queue
-            .borrow_mut()
-            .write_buffer(&self.scene_buffer, 0, bytes_of(&self.scene_uniform));
-
         {
-            encoder
-                .borrow_mut()
-                .as_mut()
-                .unwrap()
-                .begin_render_pass(&RenderPassDescriptor {
-                    color_attachments: &[Some(RenderPassColorAttachment {
-                        view: &surface_view,
-                        resolve_target: None,
-                        ops: Operations {
-                            load: wgpu::LoadOp::Clear(self.settings.clear_color),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    ..Default::default()
-                });
+            let mut camera_ref = self.camera.borrow_mut();
+            let mut uniform = *scene_bind_group.uniform();
+
+            uniform.view_proj_matrix = camera_ref.view_proj_matrix();
+            uniform.camera_dir = camera_ref.look_dir();
+            uniform.camera_pos = camera_ref.position();
+            uniform.camera_near = camera_ref.near_plane();
+            uniform.camera_far = camera_ref.far_plane();
+            uniform.time += time_manager.delta();
+
+            scene_bind_group.update_uniform(&self.queue.borrow(), &uniform);
         }
 
+        let wgpu_bind_group = scene_bind_group.bind_group(&self.device);
+
         let mut context = RenderingContext::new(
-            &mut self.camera,
+            &self.camera,
             &surface_view,
             &self.depth_view,
-            &self.scene_bind_group,
+            wgpu_bind_group.as_ref(),
             &self.queue,
             &encoder,
         );
 
-        for renderer in self.renderers.as_mut_slice() {
+        self.clear_surface(&context);
+
+        for renderer in self
+            .renderers_by_stage
+            .get_mut(&RenderStage::OPAQUE)
+            .unwrap()
+        {
+            renderer.render(&mut context);
+        }
+
+        copy_textures_2d(
+            &context,
+            &surface.texture,
+            scene_bind_group.opaque_texture(),
+        );
+        copy_textures_2d(
+            &context,
+            &self.depth_texture,
+            scene_bind_group.opaque_depth_texture(),
+        );
+
+        for renderer in self
+            .renderers_by_stage
+            .get_mut(&RenderStage::TRANSPARENT)
+            .unwrap()
+        {
             renderer.render(&mut context);
         }
 
@@ -229,7 +285,7 @@ impl<'a> RenderManager<'a> {
             .borrow()
             .submit(iter::once(encoder.replace(None).unwrap().finish()));
 
-        surface_texture.present();
+        surface.present();
 
         Ok(())
     }
@@ -282,7 +338,7 @@ impl<'a> RenderManager<'a> {
             .unwrap_or(surface_capabilities.present_modes[0]);
 
         SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
             format: surface_format,
             width,
             height,
@@ -293,23 +349,30 @@ impl<'a> RenderManager<'a> {
         }
     }
 
-    fn create_depth_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
-        let depth_texture = device.create_texture(&TextureDescriptor {
-            label: None,
-            size: Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Depth32Float,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&Default::default());
-
-        (depth_texture, depth_view)
+    fn clear_surface(&self, context: &RenderingContext) {
+        context
+            .encoder()
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .begin_render_pass(&RenderPassDescriptor {
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &context.surface_view(),
+                    resolve_target: None,
+                    ops: Operations {
+                        load: wgpu::LoadOp::Clear(self.settings.clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
     }
 }

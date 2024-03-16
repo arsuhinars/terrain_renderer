@@ -19,7 +19,7 @@ pub struct InputSettings {
 impl Default for InputSettings {
     fn default() -> Self {
         Self {
-            look_sensitivity: 0.1,
+            look_sensitivity: 0.2,
             right_key: PhysicalKey::Code(KeyCode::KeyD),
             left_key: PhysicalKey::Code(KeyCode::KeyA),
             up_key: PhysicalKey::Code(KeyCode::Space),

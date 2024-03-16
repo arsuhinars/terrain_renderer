@@ -1,43 +1,57 @@
-use bytemuck::{bytes_of, cast_slice, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3};
-use half::f16;
-use noise::{Constant, NoiseFn, Perlin};
+use noise::Constant;
 use wgpu::{
-    include_wgsl,
-    util::{BufferInitDescriptor, DeviceExt, TextureDataOrder},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CompareFunction,
-    DepthBiasState, DepthStencilState, Device, Extent3d, Face, FragmentState, FrontFace,
+    include_wgsl, BindGroup, BindGroupLayout, BlendState, Buffer, ColorTargetState, ColorWrites,
+    CompareFunction, DepthBiasState, DepthStencilState, Face, FragmentState, FrontFace,
     IndexFormat, LoadOp, MultisampleState, Operations, PipelineLayout, PipelineLayoutDescriptor,
     PolygonMode, PrimitiveState, PrimitiveTopology, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, ShaderModule, ShaderStages, StencilFaceState, StencilState, StoreOp,
-    Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureView, TextureViewDimension, VertexState,
+    RenderPipelineDescriptor, ShaderModule, StencilFaceState, StencilState, StoreOp, VertexState,
 };
 
-use crate::utils::terrain_generator::{generate_terrain_mesh, TerrainSettings};
+use crate::utils::{
+    create_uniform_init,
+    terrain_generator::{generate_terrain_mesh, TerrainSettings},
+};
 
 use super::{
+    bind_group::BindGroupHelper,
     mesh::Mesh,
     render_manager::RenderManager,
-    renderer::{Renderer, RenderingContext},
+    renderer::{RenderStage, Renderer, RenderingContext},
     vertex::Vertex,
 };
 
+#[derive(Clone, Copy)]
 pub struct WaterRendererSettings {
     pub tile_size: f32,
     pub tiles_count: u32,
     pub color: Vec3,
     pub specular: f32,
-    pub alpha: f32,
+    pub specular_color: Vec3,
+    pub density: f32,
     pub level: f32,
     pub wave_speed: Vec2,
     pub wave_scale: Vec2,
     pub wave_height: f32,
-    pub wave_texture_size: u32,
-    pub wave_texture_scale: f32,
+}
+
+impl Default for WaterRendererSettings {
+    fn default() -> Self {
+        Self {
+            tile_size: 0.75,
+            tiles_count: 15,
+            color: Vec3::new(0.2, 0.5, 0.96),
+            specular: 64.0,
+            specular_color: Vec3::new(0.75, 0.84, 0.97),
+            density: 150.0,
+            level: -0.25,
+            wave_speed: Vec2::new(0.8, 0.4),
+            wave_scale: Vec2::new(0.4, 0.4),
+            wave_height: 0.2,
+        }
+    }
 }
 
 pub struct WaterRenderer {
@@ -47,9 +61,7 @@ pub struct WaterRenderer {
 
     mesh: Mesh,
 
-    uniform_buffer: Buffer,
-    _wave_texture: Texture,
-    _wave_texture_view: TextureView,
+    _uniform_buffer: Buffer,
     _bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
 }
@@ -58,10 +70,14 @@ pub struct WaterRenderer {
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 struct WaterUniform {
     pub specular: f32,
-    pub alpha: f32,
+    pub density: f32,
+    _padding1: [f32; 2],
+    pub specular_color: Vec3,
+    _padding2: f32,
     pub wave_speed: Vec2,
     pub wave_scale: Vec2,
     pub wave_height: f32,
+    _padding3: [f32; 3],
 }
 
 impl WaterRenderer {
@@ -72,38 +88,16 @@ impl WaterRenderer {
 
         let uniform = WaterUniform {
             specular: settings.specular,
-            alpha: settings.alpha,
+            density: settings.density,
+            specular_color: settings.specular_color,
             wave_speed: settings.wave_speed,
             wave_scale: settings.wave_scale,
             wave_height: settings.wave_height,
+            ..Default::default()
         };
-        let wave_texture = device.create_texture_with_data(
-            &render_manager.queue().borrow(),
-            &TextureDescriptor {
-                label: None,
-                size: Extent3d {
-                    width: settings.wave_texture_size,
-                    height: settings.wave_texture_size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TextureFormat::R16Float,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[TextureFormat::R16Float],
-            },
-            TextureDataOrder::LayerMajor,
-            cast_slice(
-                Self::create_noise_texture(settings.wave_texture_size, settings.wave_texture_scale)
-                    .as_ref(),
-            ),
-        );
-        let wave_texture_view = wave_texture.create_view(&Default::default());
-        let (uniform_buffer, bind_group_layout, bind_group) =
-            Self::create_uniform(&uniform, &wave_texture_view, device);
+        let (uniform_buffer, bind_group_layout, bind_group) = create_uniform_init(&uniform, device);
 
-        let mesh = generate_terrain_mesh(
+        let mesh: Mesh = generate_terrain_mesh(
             device,
             &TerrainSettings {
                 tile_size: settings.tile_size,
@@ -118,7 +112,10 @@ impl WaterRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[render_manager.scene_bind_group_layout(), &bind_group_layout],
+            bind_group_layouts: &[
+                render_manager.scene_bind_group().borrow().layout(),
+                &bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -175,87 +172,10 @@ impl WaterRenderer {
 
             mesh,
 
-            uniform_buffer,
-            _wave_texture: wave_texture,
-            _wave_texture_view: wave_texture_view,
+            _uniform_buffer: uniform_buffer,
             _bind_group_layout: bind_group_layout,
             bind_group,
         }
-    }
-
-    fn create_uniform(
-        uniform: &WaterUniform,
-        wave_texture: &TextureView,
-        device: &Device,
-    ) -> (Buffer, BindGroupLayout, BindGroup) {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: bytes_of(uniform),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::all(),
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::all(),
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::TextureView(wave_texture),
-                },
-            ],
-        });
-
-        (buffer, bind_group_layout, bind_group)
-    }
-
-    fn create_noise_texture(size: u32, scale: f32) -> Box<[f16]> {
-        let noise = Perlin::new(Perlin::DEFAULT_SEED);
-
-        let mut v = Vec::<f16>::new();
-        v.resize((size * size) as usize, f16::ZERO);
-
-        for x in 0..size {
-            for y in 0..size {
-                let p = Vec2::new(x as f32, y as f32) * scale;
-                v[(y * size + x) as usize] = f16::from_f64(noise.get(p.as_dvec2().into()));
-            }
-        }
-
-        v.into_boxed_slice()
     }
 }
 
@@ -293,5 +213,9 @@ impl Renderer for WaterRenderer {
         pass.set_bind_group(1, &self.bind_group, &[]);
 
         pass.draw_indexed(0..(self.mesh.indices().len() as u32), 0, 0..1);
+    }
+
+    fn stage(&self) -> RenderStage {
+        RenderStage::TRANSPARENT
     }
 }

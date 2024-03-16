@@ -12,9 +12,10 @@ use wgpu::{
 use crate::utils::create_uniform_init;
 
 use super::{
+    bind_group::BindGroupHelper,
     mesh::Mesh,
     render_manager::RenderManager,
-    renderer::{Renderer, RenderingContext},
+    renderer::{RenderStage, Renderer, RenderingContext},
     vertex::Vertex,
 };
 
@@ -100,7 +101,7 @@ pub struct SkyboxRenderer {
 
     skybox_mesh: Mesh,
 
-    uniform: SkyboxUniform,
+    uniform: Box<SkyboxUniform>,
     uniform_buffer: Buffer,
     _uniform_bind_group_layout: BindGroupLayout,
     uniform_bind_group: BindGroup,
@@ -113,23 +114,23 @@ impl SkyboxRenderer {
     ) -> SkyboxRenderer {
         let device = render_manager.device();
 
-        let uniform = SkyboxUniform {
+        let uniform = Box::new(SkyboxUniform {
             sky_color: settings.sky_color,
             horizon_color: settings.horizon_color,
             bottom_color: settings.bottom_color,
             scattering: settings.scattering,
             ..Default::default()
-        };
+        });
 
         let (uniform_buffer, uniform_bind_group_layout, uniform_bind_group) =
-            create_uniform_init(&uniform, device);
+            create_uniform_init(uniform.as_ref(), device);
 
         let shader = device.create_shader_module(include_wgsl!("../shaders/skybox.wgsl"));
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[
-                render_manager.scene_bind_group_layout(),
+                render_manager.scene_bind_group().borrow().layout(),
                 &uniform_bind_group_layout,
             ],
             push_constant_ranges: &[],
@@ -191,10 +192,11 @@ impl Renderer for SkyboxRenderer {
         self.uniform.transform_matrix =
             camera.proj_matrix() * Mat4::from_mat3(Mat3::from_mat4(camera.view_matrix()));
 
-        context
-            .queue()
-            .borrow_mut()
-            .write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
+        context.queue().borrow_mut().write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytes_of(self.uniform.as_ref()),
+        );
 
         let mut encoder_ref = context.encoder().borrow_mut();
         let encoder = encoder_ref.as_mut().unwrap();
@@ -224,5 +226,9 @@ impl Renderer for SkyboxRenderer {
         pass.set_bind_group(1, &self.uniform_bind_group, &[]);
 
         pass.draw_indexed(0..(self.skybox_mesh.indices().len() as u32), 0, 0..1);
+    }
+
+    fn stage(&self) -> RenderStage {
+        RenderStage::OPAQUE
     }
 }

@@ -8,9 +8,10 @@ use wgpu::{
 };
 
 use super::{
+    bind_group::BindGroupHelper,
     mesh::Mesh,
     render_manager::RenderManager,
-    renderer::{Renderer, RenderingContext},
+    renderer::{RenderStage, Renderer, RenderingContext},
     vertex::Vertex,
 };
 
@@ -29,7 +30,7 @@ impl MeshRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[render_manager.scene_bind_group_layout()],
+            bind_group_layouts: &[render_manager.scene_bind_group().borrow().layout()],
             push_constant_ranges: &[],
         });
 
@@ -121,5 +122,9 @@ impl Renderer for MeshRenderer {
         pass.set_bind_group(0, context.scene_bind_group(), &[]);
 
         pass.draw_indexed(0..(self.mesh.indices().len() as u32), 0, 0..1);
+    }
+
+    fn stage(&self) -> RenderStage {
+        RenderStage::OPAQUE
     }
 }

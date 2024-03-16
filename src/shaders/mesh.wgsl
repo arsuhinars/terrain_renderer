@@ -5,8 +5,14 @@ struct GlobalLight {
 
 struct SceneUniform {
     view_proj_matrix: mat4x4f,
+    camera_dir: vec3f,
+    camera_pos: vec3f,
+    surface_size: vec2f,
+    near_plane: f32,
+    far_plane: f32,
     global_light: GlobalLight,
-    ambient_light: vec3f
+    ambient_light: vec3f,
+    time: f32
 }
 
 @group(0) @binding(0)
